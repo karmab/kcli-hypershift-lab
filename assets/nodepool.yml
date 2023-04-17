@@ -1,0 +1,22 @@
+---
+apiVersion: hypershift.openshift.io/v1beta1
+kind: NodePool
+metadata:
+  name: lab
+  namespace: clusters
+spec:
+  clusterName: lab
+  replicas: 0
+  management:
+    autoRepair: false
+    upgradeType: InPlace
+  platform:
+    type: Agent
+  release:
+    image: "quay.io/openshift-release-dev/ocp-release@sha256:b9d6ccb5ba5a878141e468e56fa62912ad7c04864acfec0c0056d2b41e3259cc"
+  replicas: 3
+  config:
+  - name: assisted-ingress-lab
+status:
+  conditions: null
+  replicas: 3
