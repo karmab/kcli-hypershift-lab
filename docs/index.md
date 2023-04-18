@@ -4,6 +4,24 @@ This hands on lab will provide you instructions so you can deploy an Hypershift 
 
 Although other platform types can be used for deploying an Hypershift cluster (such as Kubevirt or None, for which Kcli tool actually has support), we will focus on the assisted installer approach, since it's the recommended way to deploy bare metal workers.
 
+## About Hypershift
+
+HyperShift is middleware for hosting OpenShift control planes at scale that solves for cost and time to provision, as well as portability cross cloud with strong separation of concerns between management and workloads.
+
+Clusters are fully compliant OpenShift Container Platform (OCP) clusters and are compatible with standard OCP and Kubernetes toolchains.
+
+When using Hypershift, we will deploy OpenShift on top of an existing cluster by creating the following objects:
+
+- *hostedcluster*  This represents the cluster and in particular the control plane components that will be "hosted" in a dedicated cluster
+- *nodepool* This represents the workers part of our hostedcluster. Its spec contains the following elements:
+    - release image, which might be different from the one specified in the hosted cluster.
+    - platform, which indicates which target platform the workers might have. Valid values can be aws, kubevirt, none, ...
+    - replicas, which indicates how many nodes we want to deploy
+
+Both objects contain a platform attribute as part of their spec, and behaviour and additional components get deployed depending on the target platform. For instance, if we use Kubevirt, additional components will be deployed so that vms get deployed depending on the replicas spec of the nodepool.
+
+In this lab, we are using the assisted provider, suitable for bare metal deployments. It relies on assisted service being already deployed, and an *infraenv* exists in target cluster.
+
 ## General Prerequisites
 
 The following items are needed in order to be able to complete the lab from beginning to end:
