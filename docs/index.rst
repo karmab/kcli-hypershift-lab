@@ -1,117 +1,202 @@
 Introduction and Prerequisites
 ==============================
 
-This hands on lab will provide you instructions so you can deploy an Hypershift cluster. The goal is to make you understand Hypershift internals and workflow so that you can understand the workflow and value proposition.
-
-Although other platform types can be used for deploying an Hypershift cluster (such as Kubevirt or None, for which Kcli tool actually has support), we will focus on the assisted installer approach, since it’s the recommended way to deploy bare metal workers.
-
-About Hypershift
-----------------
-
-HyperShift is middleware for hosting OpenShift control planes at scale that solves for cost and time to provision, as well as portability cross cloud with strong separation of concerns between management and workloads.
-
-Clusters are fully compliant OpenShift Container Platform (OCP) clusters and are compatible with standard OCP and Kubernetes toolchains.
-
-When using Hypershift, we will deploy OpenShift on top of an existing cluster by creating the following objects:
-
--  *hostedcluster* This represents the cluster and in particular the control plane components that will be “hosted” in a dedicated cluster
--  *nodepool* This represents the workers part of our hostedcluster. Its spec contains the following elements:
-
-   -  release image, which might be different from the one specified in the hosted cluster.
-   -  platform, which indicates which target platform the workers might have. Valid values can be aws, kubevirt, none, …
-   -  replicas, which indicates how many nodes we want to deploy
-
-Both objects contain a platform attribute as part of their spec, and behaviour and additional components get deployed depending on the target platform. For instance, if we use Kubevirt, additional components will be deployed so that vms get deployed depending on the replicas spec of the nodepool.
-
-In this lab, we are using the assisted provider, suitable for bare metal deployments. It relies on assisted service being already deployed, and an *infraenv* exists in target cluster.
+This hands on guide/lab will guide you on how to leverage Kcli to deploy an Hypershift cluster
 
 General Prerequisites
 ---------------------
 
 The following items are needed in order to be able to complete the lab from beginning to end:
 
--  A base Openshift cluster already running and a KUBECONFIG pointing to it
--  A default storage class available on such cluster
--  A valid and powerful enough hypervisor (typically Libvirt, although Vsphere, oVirt can be used too)
+-  A valid and powerful enough hypervisor (typically Libvirt although Vsphere, Kubevirt or oVirt can also be used).
+-  A base Openshift cluster already with a default storage class available on such cluster. We will cover how to install it.
 -  A valid Pull secret from `here <https://console.redhat.com/openshift/install/pull-secret>`__ that we’ll keep in a file named ‘openshift_pull.json’
--  `Kcli <https://kcli.readthedocs.io/en/latest>`__ tool to ease some of the tasks.
--  Oc binary in your path (this can be downloaded using ``kcli download oc``
 
-**NOTE:** You will need around 50Gb of RAM in order for OpenShift to successfully deploy. If those requirements are not met, you can still run but the final deployment might not succeed.
+About Kcli
+----------
+
+Kcli is a virtualization wrapper with support for the following providers:
+
+-  Libvirt
+-  Vsphere
+-  Kubevirt
+-  Aws
+-  GCP
+-  Ibmcloud
+-  oVirt
+-  Openstack
+-  Packet
+
+Additionally, it can deploy Kubernetes based cluster based on
+
+-  Kubeadm
+-  Openshift
+-  Hypershift
+-  Microshift
+-  K3s
+-  Kind
+
+About Hypershift
+----------------
+
+Hypershift is a variant of OpenShift where the the control plane components run in a dedicated namespace of an existing base cluster, instead of spawning specific nodes for this matter.
+
+When using Hypershift, The following objects will be created:
+
+-  *hostedcluster* This represents the cluster and in particular the control plane components.
+-  *nodepool* This represents the workers which are part of our hostedcluster. The spec of the node pool contains the following elements:
+-  release image, which might be different from the one specified in the hosted cluster.
+-  platform, which indicates which target platform the workers might have. Valid values can be aws, assisted, kubevirt, none,…
+-  replicas, which indicates how many nodes we want to deploy.
+
+Both objects contain a platform attribute as part of their spec, and behaviour and additional components get deployed depending on the target platform.
+
+This lab, we will cover both ``none`` and ``assisted`` provider (as it is the supported path for bare metal deployments)
 
 Preparing the lab
 =================
 
-**NOTE:** This section can be skipped if lab has been prepared for you.
-
 Prepare the hypervisor
 ----------------------
 
-**NOTE:** If you want to deploy on something else than local libvirt, refer to Kcli documentation
+**NOTE:** If you want to deploy on something else than local libvirt, refer to the `providers specific documentation <https://kcli.readthedocs.io/en/latest/#provider-specifics>`__
 
-We install and launch libvirt
+We install and launch Libvirt
 
 ::
 
    sudo dnf -y install libvirt libvirt-daemon-driver-qemu qemu-kvm
+   sudo usermod -aG qemu,libvirt $(id -un)
+   sudo newgrp libvirt
    systemctl enable --now libvirtd
 
 Get Kcli
 --------
 
-We will leverage `Kcli <https://kcli.readthedocs.io/en/latest>`__ to easily create the assets needed for the lab.
-
-Install it with the following instructions:
+We Install it with the following instructions:
 
 ::
 
    sudo dnf -y copr enable karmab/kcli 
    sudo dnf -y install kcli
 
-Create baremetal-like vms
--------------------------
+Enable Redfish emulator
+-----------------------
 
--  Launch the following command:
+This step is only needed for the assisted path and allows to interact with vms created by kcli using Redfish calls.
 
 ::
 
-   kcli create vm -P uefi=true -P start=false -P memory=20480 -P numcpus=16 -P disks=['{"size": 200, "interface": "sata"}'] -P nets=['{"name": "default", "mac": "aa:aa:aa:bb:bb:90"}'] -c 3 -P plan=lab-vms lab
+   kcli create sushy-service
+
+Create base cluster
+-------------------
+
+**NOTE:** This section can be skipped if you already have a base cluster
+
+Now, we will deploy one cluster using a single control plane vm with dynamic storage
+
+**NOTE:** You will typically need at least 30Gb of RAM in order for OpenShift to successfully deploy.
+
+::
+
+   kcli create cluster openshift -P clusterprofile=sample-openshift-sno basecluster
 
 Expected Output
 
 ::
 
-   Deploying vm lab-0 from profile kvirt...
-   lab-0 created on local
-   Deploying vm lab-1 from profile kvirt...
-   lab-1 created on local
-   Deploying vm lab-2 from profile kvirt...
-   lab-2 created on local
+   Deploying on client local
+   Deploying cluster basecluster
+   Using stable version
+   Using 192.168.122.253 as api_ip
+   Setting domain to 192-168-122-253.sslip.io
+   Using existing openshift-install found in your PATH
+   Using installer version 4.12.13
+   Using image rhcos-412.86.202303211731-0-openstack.x86_64.qcow2
+   INFO Consuming Install Config from target directory
+   WARNING Making control-plane schedulable by setting MastersSchedulable to true for Scheduler cluster settings
+   INFO Manifests created in: /root/.kcli/clusters/basecluster/manifests and /root/.kcli/clusters/basecluster/openshift
+   Forcing router pods on ctlplanes since sslip is set and api_ip will be used for ingress
+   INFO Consuming Worker Machines from target directory
+   INFO Consuming Master Machines from target directory
+   INFO Consuming Openshift Manifests from target directory
+   INFO Consuming Common Manifests from target directory
+   INFO Consuming OpenShift Install (Manifests) from target directory
+   INFO Ignition-Configs created in: /root/.kcli/clusters/basecluster and /root/.kcli/clusters/basecluster/auth
+   Using keepalived virtual_router_id 240
+   Using 192.168.122.253 for api vip....
+   Deploying bootstrap
+   Deploying Vms...
+   Merging ignition data from existing /root/.kcli/clusters/basecluster/bootstrap.ign for basecluster-bootstrap
+   basecluster-bootstrap deployed on local
+   Deploying ctlplanes
+   Deploying Vms...
+   Merging ignition data from existing /root/.kcli/clusters/basecluster/ctlplane.ign for basecluster-ctlplane-0
+   basecluster-ctlplane-0 deployed on local
+   INFO Waiting up to 20m0s (until 4:45PM) for the Kubernetes API at https://api.basecluster.192-168-122-253.sslip.io:6443...
+   INFO API v1.25.8+27e744f up
+   INFO Waiting up to 30m0s (until 4:57PM) for bootstrapping to complete...
+   INFO It is now safe to remove the bootstrap resources
+   INFO Time elapsed: 17m4s
+   Launching install-complete step. It will be retried one extra time in case of timeouts
+   INFO Waiting up to 40m0s (until 5:22PM) for the cluster at https://api.basecluster.192-168-122-253.sslip.io:6443 to initialize...
+   INFO Checking to see if there is a route at openshift-console/console...
+   INFO Install complete!
+   INFO To access the cluster as the system:admin user when using 'oc', run 'export KUBECONFIG=/root/.kcli/clusters/basecluster/auth/kubeconfig'
+   INFO Access the OpenShift web-console here: https://console-openshift-console.apps.basecluster.192-168-122-253.sslip.io
+   INFO Login to the console with user: "kubeadmin", and password: "XXXX-XXXX-XXXX-XXXX"
+   INFO Time elapsed: 10m50s
+   Deleting basecluster-bootstrap
+   Adding app lvms-operator
+   Forcing namespace to openshift-storage
+   namespace/openshift-storage created
+   operatorgroup.operators.coreos.com/lvms-operator-operatorgroup created
+   subscription.operators.coreos.com/lvms-operator created
+   Waiting for CRD LVMCluster to be created
+   Waiting for CRD LVMCluster to be created
+   Waiting for CRD LVMCluster to be created
+   Waiting for CRD LVMCluster to be created
+   lvmcluster.lvm.topolvm.io/lvmcluster created
+   Waiting for the storageclass to be created
+   Waiting for the storageclass to be created
+   Waiting for the storageclass to be created
+   Waiting for the storageclass to be created
+   Waiting for the storageclass to be created
+   Waiting for the storageclass to be created
+   Waiting for the storageclass to be created
+   Waiting for the storageclass to be created
+   Waiting for the storageclass to be created
+   Waiting for the storageclass to be created
+   NAME                 PROVISIONER   RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+   lvms-vg1 (default)   topolvm.io    Delete          WaitForFirstConsumer   true                   3s
+   storageclass.storage.k8s.io/lvms-vg1 patched (no change)
+   Adding app users
+   Adding dev user dev with password dev
+   Adding admin user admin with password admin
+   Warning: resource oauths/cluster is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by oc apply. oc apply should only be used on resources created declaratively by either oc create --save-config or oc apply. The missing annotation will be patched automatically.
+   oauth.config.openshift.io/cluster configured
+   secret/htpass-secret created
+   Granting cluster-admin role to admin
+   Warning: User 'admin' not found
+   clusterrole.rbac.authorization.k8s.io/cluster-admin added: "admin"
+   Creating cluster-admins group
+   group.user.openshift.io/cluster-admins created
+   Adding admin user admin to cluster-admins group
+   group.user.openshift.io/cluster-admins added: "admin"
 
-This will deploy 3 empty ctlplane vms to emulate bare metal nodes.
-
--  Check the created vms
+As per this output, we can use the cluster by setting properly the KUBECONFIG env variable
 
 ::
 
-   kcli list vm
-
-Expected Output
-
-::
-
-   +------------------------+--------+-----------------+------------------------------------------------------+---------------+---------+
-   |          Name          | Status |        Ip       |                        Source                        |      Plan     | Profile |
-   +------------------------+--------+-----------------+------------------------------------------------------+---------------+---------+
-   |         lab-0          |  down  |                 |                                                      |      lab      |  kvirt  |
-   |         lab-1          |  down  |                 |                                                      |      lab      |  kvirt  |
-   |         lab-2          |  down  |                 |                                                      |      lab      |  kvirt  |
-   +------------------------+--------+-----------------+------------------------------------------------------+---------------+---------+
+   export KUBECONFIG=/root/.kcli/clusters/basecluster/auth/kubeconfig
 
 Hypershift installation
 =======================
 
-In this section, we install Hypershift
+**NOTE:** In the remainder of this document, we assume KUBECONFIG is properly set.
+
+In this section, we will cover how to install Hypershift
 
 Launch the following command:
 
@@ -142,61 +227,15 @@ Expected Output
 
 This performs the following tasks:
 
--  Craft proper namespace, operatorgroup and subscription of the multicluster engine from package manifest
--  Wait for MultiClusterEngine CRD
--  Create a multiclusterengine CR with the hypershift add on enabled
--  Define a provisioning CR to make sure metal3 operator is running
--  Create the proper configuration for the assisted service
+-  Craft proper namespace, operatorgroup and subscription of the multicluster engine (from the information available in the packagemanifest object).
+-  Wait for MultiClusterEngine CRD.
+-  Create a ``multiclusterengine`` CR with the hypershift addon enabled.
+-  Define a provisioning CR to make sure metal3 operator is running.
+-  Create the proper configuration for the assisted service.
 
-We can check the pods deployed by using
+**NOTE:** By default, assisted service also gets deployed, but it’s only mandatory when using the ``assisted``
 
-::
-
-   oc get pod -n multicluster-engine
-
-Expected Output
-
-::
-
-   multicluster-engine                                agentinstalladmission-78464dd777-bdwgf                                1/1     Running            0               11m
-   multicluster-engine                                agentinstalladmission-78464dd777-fr7rt                                1/1     Running            0               11m
-   multicluster-engine                                assisted-image-service-0                                              1/1     Running            0               11m
-   multicluster-engine                                assisted-service-6769dff9b9-cng9b                                     2/2     Running            0               11m
-   multicluster-engine                                cluster-curator-controller-55976b8d7d-dzc2j                           1/1     Running            0               13m
-   multicluster-engine                                cluster-curator-controller-55976b8d7d-stf6x                           1/1     Running            0               13m
-   multicluster-engine                                cluster-image-set-controller-6447fc7b6d-tksb9                         1/1     Running            0               13m
-   multicluster-engine                                cluster-manager-65b886b48-8hz4v                                       1/1     Running            0               13m
-   multicluster-engine                                cluster-manager-65b886b48-8z5fq                                       1/1     Running            0               13m
-   multicluster-engine                                cluster-manager-65b886b48-sg98x                                       1/1     Running            0               13m
-   multicluster-engine                                cluster-proxy-addon-manager-6b8575dc55-cljxd                          1/1     Running            0               12m
-   multicluster-engine                                cluster-proxy-addon-manager-6b8575dc55-g78wg                          1/1     Running            0               12m
-   multicluster-engine                                cluster-proxy-addon-user-8c9cb664b-78bvd                              2/2     Running            0               12m
-   multicluster-engine                                cluster-proxy-addon-user-8c9cb664b-pndlg                              2/2     Running            0               12m
-   multicluster-engine                                cluster-proxy-c6f9ff875-9fqlt                                         1/1     Running            0               12m
-   multicluster-engine                                cluster-proxy-c6f9ff875-kdr74                                         1/1     Running            0               12m
-   multicluster-engine                                clusterclaims-controller-66b6748d7d-n9vsp                             2/2     Running            0               13m
-   multicluster-engine                                clusterclaims-controller-66b6748d7d-tmwhq                             2/2     Running            0               13m
-   multicluster-engine                                clusterlifecycle-state-metrics-v2-6c64ddf44b-59xx6                    1/1     Running            0               13m
-   multicluster-engine                                console-mce-console-5f4886bd56-lhkmm                                  1/1     Running            0               13m
-   multicluster-engine                                console-mce-console-5f4886bd56-plpr7                                  1/1     Running            0               13m
-   multicluster-engine                                discovery-operator-86d4f65f76-ks8ml                                   1/1     Running            0               13m
-   multicluster-engine                                hive-operator-6667956b88-plqvm                                        1/1     Running            0               13m
-   multicluster-engine                                hypershift-addon-manager-78f84b794c-ggssq                             1/1     Running            0               13m
-   multicluster-engine                                hypershift-cli-download-6695fcf9c-hwwh8                               1/1     Running            0               12m
-   multicluster-engine                                infrastructure-operator-5d88f5677f-2rxrk                              1/1     Running            0               13m
-   multicluster-engine                                managedcluster-import-controller-v2-6f556c9555-j8f6v                  1/1     Running            0               13m
-   multicluster-engine                                managedcluster-import-controller-v2-6f556c9555-s867f                  1/1     Running            0               13m
-   multicluster-engine                                multicluster-engine-operator-bbf4f7645-btv24                          1/1     Running            0               13m
-   multicluster-engine                                multicluster-engine-operator-bbf4f7645-q6rm7                          1/1     Running            0               13m
-   multicluster-engine                                ocm-controller-689c99d59c-55xmh                                       1/1     Running            0               13m
-   multicluster-engine                                ocm-controller-689c99d59c-xmxbl                                       1/1     Running            0               13m
-   multicluster-engine                                ocm-proxyserver-6f4f7d487-l9rl4                                       1/1     Running            0               13m
-   multicluster-engine                                ocm-proxyserver-6f4f7d487-xrb2n                                       1/1     Running            0               13m
-   multicluster-engine                                ocm-webhook-769f6c7f7d-6ct8h                                          1/1     Running            0               13m
-   multicluster-engine                                ocm-webhook-769f6c7f7d-pgswn                                          1/1     Running            0               13m
-   multicluster-engine                                provider-credential-controller-77647dbcdc-4zftp                       2/2     Running            0               13m
-
-Hypershift operator was also deployed in its own namespace
+We can check hypershift operator was deployed in its own namespace by running:
 
 ::
 
@@ -214,7 +253,7 @@ Cluster deployment
 ==================
 
 Parameter file
-==============
+~~~~~~~~~~~~~~
 
 We prepare a parameter file named ``lab_params.yml`` providing relevant information for deployment
 
@@ -222,24 +261,18 @@ We prepare a parameter file named ``lab_params.yml`` providing relevant informat
 
    version: stable
    tag: 4.12
-   ingress_ip: 192.168.122.248
-   workers: 3
+   ingress_ip: 192.168.122.252
+   workers: 2
    sslip: true
-   baremetal_hosts:
-   - url: http://192.168.122.1:9000/redfish/v1/Systems/local/lab-0
-     mac: "aa:aa:aa:bb:bb:90"
-   - url: http://192.168.122.1:9000/redfish/v1/Systems/local/lab-1
-     mac: "aa:aa:aa:bb:bb:91"
-   - url: http://192.168.122.1:9000/redfish/v1/Systems/local/lab-2
-     mac: "aa:aa:aa:bb:bb:92"
 
-In this output, note
+In this output, note the following elements:
 
--  version and tag allow to set specific versions, as long as they are supported by the Hypershift operator
--  we specify an ingress vip that will be added to the nodes via machineconfig. An alternative and common way would be to use a loadbalancer ip via metallb
--  the baremetal_hosts array contains a list of hosts to be booted via Redfish. For each of them , we specify a bmc url and a valid MAC address for the node so that metal3 operator can identify it. This array would also contain user/password credentials if using real bare metal nodes.
+-  ``version`` and ``tag`` allow to set specific versions, but they need to be supported by the Hypershift operator.
+-  The ``sslip`` flag leverages sslip service so that no DNS entries are required to exist for deployment to succeed.
+-  We specify an ``ingress_ip`` vip that will be added to the via a keepalived static pod injected when merging Ignition. An alternative and common way is to to use a loadbalancer ip via metallb on the installed cluster.
 
-**NOTE:** The boolean flag can be set to assisted to install hypershift and assisted if missing.
+Deployment
+~~~~~~~~~~
 
 We launch the deployment with
 
@@ -253,58 +286,65 @@ Expected Output
 
    Deploying cluster lab
    Using default class odf-storagecluster-ceph-rbd
-   Using 10.19.135.112 as management api ip
-   Using keepalived virtual_router_id 248
+   Using keepalived virtual_router_id 221
    Setting domain to 192-168-122-248.sslip.io
    Creating control plane assets
-   namespace/clusters configured
-   namespace/clusters-lab created
-   secret/lab-pull-secret created
-   secret/lab-ssh-key created
-   role.rbac.authorization.k8s.io/capi-provider-role created
-   infraenv.agent-install.openshift.io/lab created
-   secret/lab-pull-secret created
-   secret/lab-ssh-key created
-   hostedcluster.hypershift.openshift.io/lab created
-   Downloading openshift-install from https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest-4.12
+   namespace/clusters created
+   secret/ci-hypershift-pull-secret created
+   secret/ci-hypershift-ssh-key created
+   hostedcluster.hypershift.openshift.io/ci-hypershift created
+   Downloading openshift-install registry.ci.openshift.org/ocp/release:4.13 in current directory
    Move downloaded openshift-install somewhere in your PATH if you want to reuse it
-   Using installer version 4.12.12
-   secret/lab-node-0 created
-   baremetalhost.metal3.io/lab-node-0 created
-   secret/lab-node-1 created
-   baremetalhost.metal3.io/lab-node-1 created
-   secret/lab-node-2 created
-   baremetalhost.metal3.io/lab-node-2 created
-   Waiting for 3 agents to appear
-   configmap/assisted-ingress-lab created
-   nodepool.hypershift.openshift.io/lab created
+   Using installer version 4.13.0-0.nightly-2023-04-18-005127
+   Using image rhcos-413.92.202304131328-0-openstack.x86_64.qcow2
+   nodepool.hypershift.openshift.io/ci-hypershift created
+   Waiting before ignition data is available
+     % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                    Dload  Upload   Total   Spent    Left  Speed
+
+     0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+   100    16  100    16    0     0    290      0 --:--:-- --:--:-- --:--:--   290
+     % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                    Dload  Upload   Total   Spent    Left  Speed
+
+     0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+   100  341k    0  341k    0     0  6322k      0 --:--:-- --:--:-- --:--:-- 6322k
    Warning: would violate PodSecurity "restricted:v1.24": allowPrivilegeEscalation != false (container "autoapprover" must set securityContext.allowPrivilegeEscalation=false), unrestricted capabilities (container "autoapprover" must set securityContext.capabilities.drop=["ALL"]), runAsNonRoot != true (pod or container "autoapprover" must set securityContext.runAsNonRoot=true), seccompProfile (pod or container "autoapprover" must set securityContext.seccompProfile.type to "RuntimeDefault" or "Localhost")
-   cronjob.batch/lab-autoapprover created
+   cronjob.batch/ci-hypershift-autoapprover created
    Waiting for kubeconfig to be available
    # kubeconfig
-   Waiting for kubeadmin-password to be available
+   Waiting for kubeadmin*** be available
    # password
+   Deploying workers
+   Deploying Vms...
+   Merging ignition data from existing /root/.kcli/clusters/lab/nodepool.ign for lab-worker-0
+   lab-worker-0 deployed on local
+   Merging ignition data from existing /root/.kcli/clusters/lab/nodepool.ign for lab-worker-1
+   lab-worker-1 deployed on local
    Launching install-complete step. It will be retried extra times to handle timeouts
-   INFO Waiting up to 40m0s (until 3:54PM) for the cluster at https://10.19.135.112:30155 to initialize...
-   INFO Checking to see if there is a route at openshift-console/console...
-   INFO Install complete!
-   INFO To access the cluster as the system:admin user when using 'oc', run 'export KUBECONFIG=/root/.kcli/clusters/lab/auth/kubeconfig'
-   INFO Access the OpenShift web-console here: https://console-openshift-console.apps.lab.192-168-122-248.sslip.io
-   INFO Login to the console with user: "kubeadmin", and password: "XXXX-YYYYY-ZZZ-WWWW\n"
-   INFO Time elapsed: 21m42s
+   level=info msg=Waiting up to 40m0s (until 1:18AM) for the cluster at https://10.19.135.112:31422 to initialize...
+   W0420 00:38:23.137764 3940949 reflector.go:424] k8s.io/client-go/tools/watch/informerwatcher.go:146: failed to list *v1.ClusterVersion: Get "https://10.19.135.112:31422/apis/config.openshift.io/v1/clusterversions?fieldSelector=metadata.name%3Dversion&limit=500&resourceVersion=0": x509: certificate has expired or is not yet valid: current time 2023-04-20T00:38:23+02:00 is before 2023-04-19T22:40:48Z
+   E0420 00:38:23.137848 3940949 reflector.go:140] k8s.io/client-go/tools/watch/informerwatcher.go:146: Failed to watch *v1.ClusterVersion: failed to list *v1.ClusterVersion: Get "https://10.19.135.112:31422/apis/config.openshift.io/v1/clusterversions?fieldSelector=metadata.name%3Dversion&limit=500&resourceVersion=0": x509: certificate has expired or is not yet valid: current time 2023-04-20T00:38:23+02:00 is before 2023-04-19T22:40:48Z
+   (...)
+   level=info msg=Checking to see if there is a route at openshift-console/console...
+   level=info msg=Install complete!
+   level=info msg=To access the cluster as the system:admin user when using 'oc', run 'export KUBECONFIG=/root/.kcli/clusters/lab/auth/kubeconfig'
+   level=info msg=Access the OpenShift web-console here: https://console-openshift-console.apps.lab.192-168-122-253.sslip.io
+   level=info msg=Login to the console with user: "kubeadmin", and password: "XXXX-XXXX-XXXX-XXXX\n"
+   level=info msg=Time elapsed: 12m18s
 
 This will:
 
 -  Create a hostedcluster object
--  Create an infraenv object
--  Create baremetal host objects (bmh) using the spec from the parameter file. The vms will be booted via redfish as would bare metal nodes.
--  Wait for the corresponding nodes to boot and register as agents
--  Download locally openshift-install to properly evaluate the release image to use in the nodepool spec
--  Create a nodepool object with the corresponding number of replicas and the correct release image
--  Wait for the installation to complete using openshift-install ``wait-for install-complete`` subcommand
+-  Download locally openshift-install to properly evaluate the release image to use in the nodepool spec.
+-  Wait for ignition server to be ready in the control plane and download worker ignition.
+-  Create a nodepool object with the corresponding number of replicas and the correct release image.
+-  Download rhcos image associated to the virtualization type and to the version.
+-  Create vms using this rhcos image and by combining retrieved ignition with one specific to the node (allowing to inject static pods or force hostname).
+-  Wait for the installation to complete using ``openshift-install wait-for install-complete`` subcommand.
 
 Checking the control plane
-==========================
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 When using hypershift, the control planes component are hosted in a dedicated namespace, as we can see with
 
@@ -317,7 +357,6 @@ Expected Output
 ::
 
    NAME                                                  READY   STATUS    RESTARTS   AGE
-   capi-provider-67c67c9c4f-vvxgh                        1/1     Running   0          57m
    catalog-operator-76d68cf889-wxc7b                     2/2     Running   0          55m
    certified-operators-catalog-686984f5cb-xgnsq          1/1     Running   0          55m
    cluster-api-c9c66b697-57c6x                           1/1     Running   0          57m
@@ -356,79 +395,29 @@ Expected Output
    redhat-marketplace-catalog-767447c99b-dmsqj           1/1     Running   0          55m
    redhat-operators-catalog-88df6b978-5rl2n              1/1     Running   0          39m
 
-In this output, note the ``capi-provider`` pod which is in charge of assigning agents to a hosted cluster when replicas of a nodepool are indicated
-
-Checking the assisted installer components
-==========================================
-
-During deployment, we created baremetal hosts object, which were annotated with a label ``infraenvs.agent-install.openshift.io: lab``
-
-For instance, we can see it the bmh associated to lab-node-0
-
-::
-
-   oc get bmh -n clusters-lab lab-node-0 -o yaml
-
-Expected Output
-
-::
-
-   apiVersion: metal3.io/v1alpha1
-   kind: BareMetalHost
-   metadata:
-     name: lab-node-1
-     namespace: clusters-lab
-     labels:
-       infraenvs.agent-install.openshift.io: lab
-     annotations:
-       inspect.metal3.io: disabled
-       bmac.agent-install.openshift.io/hostname: lab-node-1
-       bmac.agent-install.openshift.io/role: worker
-   spec:
-     bmc:
-       disableCertificateVerification: True
-       address: redfish-virtualmedia+http://192.168.122.1:9000/redfish/v1/Systems/local/lab-1
-       credentialsName: lab-node-1
-     bootMACAddress: aa:aa:aa:bb:bb:91
-     hardwareProfile: unknown
-     online: true
-     automatedCleaningMode: disabled
-     bootMode: legacy
-
-With this annotation, the corresponding nodes are booted via Redfish with an iso that makes them available as part of the infraenv
-
-::
-
-   oc get agent -n clusters-lab
-
-Expected Output
-
-::
-
-   NAME                                   CLUSTER   APPROVED   ROLE     STAGE
-   0d711921-1afd-42e8-b2af-59b1e24d1b62   lab       true       worker   Done
-   a1b35081-b4ec-4569-aff2-db0075eb8df2   lab       true       worker   Done
-   e26fc0e1-9fd4-42c2-8959-7ff9acb8fe8f   lab       true       worker   Done
-
-When the replicas number in the nodepool object gets changed, capi-provider component tries to locate available agent and plug them as additional workers to the corresponding cluster
-
 Accessing the cluster
-=====================
+~~~~~~~~~~~~~~~~~~~~~
 
-The kubeconfig corresponding to our installation gets stored in ``$HOME/.kcli/clusters/lab/auth/kubeconfig`` but we can also retrieve it manually using the following command:
+The kubeconfig corresponding to our installation gets stored in ``$HOME/.kcli/clusters/lab/auth/kubeconfig``
+
+With this kubeconfig, we can check that the installation was successful
+
+-  By Checking the vms
 
 ::
 
-   CLUTSTER=lab
-   oc extract -n clusters secret/$CLUSTER-admin-kubeconfig --to=- > kubeconfig.$CLUSTER
+   kcli list vm
 
 Expected output
 
 ::
 
-   # kubeconfig
-
-With the kubeconfig, we can check how the installation is successful
+   +---------------+--------+-----------------+----------------------------------------------------+----------+---------+
+   |  Name         | Status | Ip              |  Source                                            |    Plan  | Profile |
+   +---------------+--------+-----------------+----------------------------------------------------+----------+---------+
+   | lab-worker-0  |  up    | 192.168.122.201 | rhcos-413.92.202304131328-0-openstack.x86_64.qcow2 | lab      |  kvirt  |
+   | lab-worker-1  |  up    | 192.168.122.202 | rhcos-413.92.202304131328-0-openstack.x86_64.qcow2 | lab      |  kvirt  |
+   +---------------+--------+-----------------+----------------------------------------------------+----------+---------+
 
 -  By Checking the nodes
 
@@ -441,10 +430,9 @@ Expected output
 
 ::
 
-   NAME         STATUS   ROLES    AGE     VERSION
-   lab-node-0   Ready    worker   6m37s   v1.25.7+eab9cc9
-   lab-node-1   Ready    worker   6m35s   v1.25.7+eab9cc9
-   lab-node-2   Ready    worker   5m35s   v1.25.7+eab9cc9
+   NAME           STATUS   ROLES    AGE     VERSION
+   lab-worker-0   Ready    worker   6m37s   v1.25.7+eab9cc9
+   lab-worker-1   Ready    worker   6m35s   v1.25.7+eab9cc9
 
 -  By Checking the version of the cluster
 
@@ -494,6 +482,199 @@ Expected output
    service-ca                                 4.12.12   True        False         False      17m
    storage                                    4.12.12   True        False         False      41m
 
+Using assisted platform
+-----------------------
+
+(Optional) Create baremetal-like vms for assisted path
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If we dont have bare metal nodes, we can use the following will deploy 2 empty vms to emulate them.
+
+-  Launch the following command:
+
+::
+
+   kcli create vm -P uefi_legacy=true -P start=false -P memory=20480 -P numcpus=16 -P disks=['{"size": 200, "interface": "sata"}'] -P nets=['{"name": "default", "mac": "aa:aa:aa:bb:bb:90"}'] -P plan=lab-assisted-vms -c 2 lab-assisted
+
+Expected Output
+
+::
+
+   Deploying vm lab-assisted-0 from profile kvirt...
+   lab-assisted-0 created on local
+   Deploying vm lab-assisted-1 from profile kvirt...
+   lab-assisted-1 created on local
+
+-  Check the created vms
+
+::
+
+   kcli list vm
+
+Expected Output
+
+::
+
+   +----------------+--------+----+---------+---------------+---------+
+   |  Name          | Status | Ip |  Source |      Plan     | Profile |
+   +----------------+--------+----+---------+---------------+---------+
+   | lab-assisted-0 |  down  |    |         |      lab      |  kvirt  |
+   | lab-assisted-1 |  down  |    |         |      lab      |  kvirt  |
+   +----------------+--------+----+---------+---------------+---------+
+
+.. _parameter-file-1:
+
+Parameter file
+~~~~~~~~~~~~~~
+
+We prepare a parameter file named ``lab_assisted_params.yml`` providing relevant information for deployment
+
+::
+
+   assisted: true
+   version: stable
+   tag: 4.12
+   ingress_ip: 192.168.122.251
+   workers: 2
+   sslip: true
+   baremetal_hosts:
+   - url: http://192.168.122.1:9000/redfish/v1/Systems/local/lab-assisted-0
+     mac: "aa:aa:aa:bb:bb:90"
+   - url: http://192.168.122.1:9000/redfish/v1/Systems/local/lab-assisted-1
+     mac: "aa:aa:aa:bb:bb:91"
+
+In this output, note the extra flags compared to the ``none`` approach:
+
+-  ``assisted`` indicates that we will leverage the assisted platform.
+-  The ``ingress_ip`` vip will be added to the nodes via a machineconfig.
+-  the ``baremetal_hosts`` array which is mandatory and contains a list of hosts to be booted via Redfish. For each of them, we specify:
+
+   -  a bmc url
+   -  valid MAC address for the node so that metal3 operator can identify it.
+   -  This array would also contain user/password credentials if using real bare metal nodes. Based on this information, bmh objects will be created.
+
+**NOTE:** The flag ``mce_assisted`` can be set to True to install hypershift with assisted if missing.
+
+.. _deployment-1:
+
+Deployment
+~~~~~~~~~~
+
+We launch the deployment with
+
+::
+
+   kcli create cluster hypershift --pf lab_assisted_params.yml lab-assisted
+
+Expected Output
+
+::
+
+   Deploying cluster lab-assisted
+   Using default class odf-storagecluster-ceph-rbd
+   Using 10.19.135.112 as management api ip
+   Using keepalived virtual_router_id 248
+   Setting domain to 192-168-122-251.sslip.io
+   Creating control plane assets
+   namespace/clusters configured
+   namespace/clusters-lab created
+   secret/lab-pull-secret created
+   secret/lab-ssh-key created
+   role.rbac.authorization.k8s.io/capi-provider-role created
+   infraenv.agent-install.openshift.io/lab created
+   secret/lab-pull-secret created
+   secret/lab-ssh-key created
+   hostedcluster.hypershift.openshift.io/lab created
+   Downloading openshift-install from https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest-4.12
+   Move downloaded openshift-install somewhere in your PATH if you want to reuse it
+   Using installer version 4.12.12
+   secret/lab-assisted-node-0 created
+   baremetalhost.metal3.io/lab-assisted-node-0 created
+   secret/lab-assisted-node-1 created
+   baremetalhost.metal3.io/lab-assisted-node-1 created
+   Waiting for 2 agents to appear
+   configmap/assisted-ingress-lab created
+   nodepool.hypershift.openshift.io/lab created
+   Warning: would violate PodSecurity "restricted:v1.24": allowPrivilegeEscalation != false (container "autoapprover" must set securityContext.allowPrivilegeEscalation=false), unrestricted capabilities (container "autoapprover" must set securityContext.capabilities.drop=["ALL"]), runAsNonRoot != true (pod or container "autoapprover" must set securityContext.runAsNonRoot=true), seccompProfile (pod or container "autoapprover" must set securityContext.seccompProfile.type to "RuntimeDefault" or "Localhost")
+   cronjob.batch/lab-autoapprover created
+   Waiting for kubeconfig to be available
+   # kubeconfig
+   Waiting for kubeadmin-password to be available
+   # password
+   Launching install-complete step. It will be retried extra times to handle timeouts
+   INFO Waiting up to 40m0s (until 3:54PM) for the cluster at https://10.19.135.112:30155 to initialize...
+   INFO Checking to see if there is a route at openshift-console/console...
+   INFO Install complete!
+   INFO To access the cluster as the system:admin user when using 'oc', run 'export KUBECONFIG=/root/.kcli/clusters/lab/auth/kubeconfig'
+   INFO Access the OpenShift web-console here: https://console-openshift-console.apps.lab.192-168-122-251.sslip.io
+   INFO Login to the console with user: "kubeadmin", and password: "XXXX-YYYYY-ZZZ-WWWW\n"
+   INFO Time elapsed: 21m42s
+
+This will:
+
+-  Create a hostedcluster object.
+-  Create an infraenv object.
+-  Create baremetal host objects (BMH) using the spec from the parameter file. The vms will be booted via Redfish as would bare metal nodes.
+-  Wait for the corresponding nodes to boot and register as agents.
+-  Download locally openshift-install to properly evaluate the release image to use in the nodepool spec.
+-  Create a nodepool object with the corresponding number of replicas and the correct release image.
+-  Wait for the installation to complete using ``openshift-install wait-for install-complete`` subcommand.
+
+In the cluster namespace, note the ``capi-provider`` pod which is in charge of assigning agents to a hosted cluster when replicas of a nodepool are indicated
+
+Checking the assisted installer components
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+During deployment, we created baremetal hosts object, which were annotated with a label ``infraenvs.agent-install.openshift.io: lab``
+
+For instance, we can see the BMH associated to lab-node-0
+
+::
+
+   oc get bmh -n clusters-lab lab-assisted-node-0 -o yaml
+
+Expected Output
+
+::
+
+   apiVersion: metal3.io/v1alpha1
+   kind: BareMetalHost
+   metadata:
+     name: lab-assisted-node-1
+     namespace: clusters-lab
+     labels:
+       infraenvs.agent-install.openshift.io: lab
+     annotations:
+       inspect.metal3.io: disabled
+       bmac.agent-install.openshift.io/hostname: lab-assisted-node-1
+       bmac.agent-install.openshift.io/role: worker
+   spec:
+     bmc:
+       disableCertificateVerification: True
+       address: redfish-virtualmedia+http://192.168.122.1:9000/redfish/v1/Systems/local/lab-assisted-1
+       credentialsName: lab-assisted-node-1
+     bootMACAddress: aa:aa:aa:bb:bb:91
+     hardwareProfile: unknown
+     online: true
+     automatedCleaningMode: disabled
+     bootMode: legacy
+
+With this annotation, the corresponding nodes are booted via Redfish with an ISO that makes them available as part of the infraenv
+
+::
+
+   oc get agent -n clusters-lab
+
+Expected Output
+
+::
+
+   NAME                                   CLUSTER          APPROVED   ROLE     STAGE
+   0d711921-1afd-42e8-b2af-59b1e24d1b62   lab-assisted     true       worker   Done
+   a1b35081-b4ec-4569-aff2-db0075eb8df2   lab-assisted     true       worker   Done
+
+When the replicas number in the nodepool object gets changed, capi-provider component locates available agent and binds them as additional workers to the corresponding cluster.
+
 Review
 ======
 
@@ -501,9 +682,9 @@ This concludes the lab !
 
 In this lab, you have accomplished the following activities.
 
-1. Properly prepare a successful Hypershift deployment leveraging Assisted operator and Kcli tool.
-2. Deploy OpenShift on vms the same way you would deploy on bare metal Nodes !
-3. Understand internal aspects of the workflow and which specific objects are key when leveraging Hypershift
+1. Deploy a successful Hypershift deployment leveraging Kcli tooling.
+2. Deploy a successful Hypershift deployment leveraging Kcli tooling using assisted platform and vms emulating bare metal nodes
+3. Learn how to check the resulting environment
 
 Additional resources
 ====================
@@ -520,5 +701,7 @@ Cleaning the lab
 
 ::
 
-   kcli delete cluster hypershift lab
-   kcli delete plan --yes lab-vms
+   kcli delete cluster --yes lab
+   kcli delete plan --yes lab-assisted
+   kcli delete plan --yes lab-assisted-vms
+   kcli delete cluster --yes basecluster
